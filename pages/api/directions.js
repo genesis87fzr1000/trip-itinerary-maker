@@ -1,37 +1,44 @@
 // pages/api/directions.js
-
 export default async function handler(req, res) {
-  const { from, to } = req.query;
-
-  if (!from || !to) {
-    return res.status(400).json({ error: "from と to を指定してください。" });
-  }
-
-  const apiKey = process.env.GOOGLE_MAPS_API_KEY; // サーバー用 API キー（制限なし推奨）
-
   try {
-    const response = await fetch(
-      `https://maps.googleapis.com/maps/api/directions/json?origin=${encodeURIComponent(
-        from
-      )}&destination=${encodeURIComponent(to)}&key=${apiKey}`
-    );
+    const { waypoints } = req.body;
 
-    const data = await response.json();
-
-    if (data.status !== "OK") {
-      return res.status(500).json({ error: data.error_message || data.status });
+    if (!waypoints || waypoints.length < 2) {
+      return res.status(400).json({ error: "Waypoints が不足しています" });
     }
 
-    // 必要な情報だけ返す
-    const routeInfo = {
-      summary: data.routes[0].summary,
-      legs: data.routes[0].legs,
-      overview_polyline: data.routes[0].overview_polyline,
-    };
+    const origin = waypoints[0];
+    const destination = waypoints[waypoints.length - 1];
+    const viaPoints = waypoints.slice(1, waypoints.length - 1);
 
-    res.status(200).json(routeInfo);
+    const params = new URLSearchParams({
+      key: process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY,
+      origin,
+      destination,
+    });
+
+    if (viaPoints.length > 0) {
+      params.append("waypoints", viaPoints.join("|"));
+    }
+
+    params.append("alternatives", "true");
+
+    const url = `https://maps.googleapis.com/maps/api/directions/json?${params}`;
+
+    const response = await fetch(url);
+    const data = await response.json();
+
+    if (!data.routes || data.routes.length === 0) {
+      return res.status(200).json({ routes: [] });
+    }
+
+    // フロントでそのまま directions.routes を使えるように整形
+    return res.status(200).json({
+      routes: data.routes,
+    });
+
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Directions API 取得中にエラーが発生しました。" });
+    res.status(500).json({ error: "Server Error" });
   }
 }
