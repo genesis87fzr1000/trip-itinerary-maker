@@ -10,39 +10,37 @@ export default function Home() {
   useEffect(() => {
     if (!window.google) return;
 
-    const mapOptions = {
-      zoom: 10,
-      center: { lat: 35.6895, lng: 139.6917 },
-    };
-
     const newMap = new window.google.maps.Map(
       document.getElementById("map"),
-      mapOptions
+      {
+        center: { lat: 35.6895, lng: 139.6917 },
+        zoom: 10
+      }
     );
 
     const renderer = new window.google.maps.DirectionsRenderer({
       map: newMap,
-      suppressMarkers: false,
     });
 
     setMap(newMap);
     setDirectionsRenderer(renderer);
   }, []);
 
-  // ルート検索
+  // /api/directions に送ってルートを取得
   const fetchRoute = async () => {
     if (points.length < 2) {
-      alert("少なくとも2地点を追加してください。");
+      alert("2地点以上追加してください。");
       return;
     }
 
-    const res = await fetch(`/api/directions`, {
+    const res = await fetch("/api/directions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ points }),
     });
 
     const data = await res.json();
+
     if (!data || !data.routes || data.routes.length === 0) {
       alert("Google Directions API がルートを返しませんでした。");
       return;
@@ -50,20 +48,15 @@ export default function Home() {
 
     setResult(data);
 
-    // ★ 地図に描画するため DirectionsRenderer が読める形式に変換
-    const gRoute = data.routes[0]; // 1つ目の候補を地図に描画
-
+    // 地図に描画
+    const r = data.routes[0]; // 1番目の候補を描画
     directionsRenderer.setDirections({
       routes: [
         {
-          legs: gRoute.legs,
-          overview_polyline: {
-            // Google が返す polyline をそのまま使う
-            points: gRoute.overview_polyline.points,
-          },
-        },
+          legs: r.legs,
+          overview_polyline: r.overview_polyline
+        }
       ],
-      request: {},
     });
   };
 
@@ -71,10 +64,10 @@ export default function Home() {
     <div>
       <h1>ルート検索</h1>
 
-      {/* 地点追加 */}
+      {/* 地点入力 */}
       <input
         type="text"
-        placeholder="場所名を入力"
+        placeholder="地点を入力して Enter"
         onKeyDown={(e) => {
           if (e.key === "Enter") {
             setPoints([...points, e.target.value]);
@@ -83,15 +76,17 @@ export default function Home() {
         }}
       />
 
+      {/* 追加された地点の表示 */}
       <ul>
         {points.map((p, i) => (
           <li key={i}>{i + 1}. {p}</li>
         ))}
       </ul>
 
+      {/* 検索ボタン */}
       <button onClick={fetchRoute}>ルート検索</button>
 
-      {/* ルート文字情報 */}
+      {/* テキスト結果 */}
       {result && (
         <div>
           <h2>検索結果</h2>
@@ -100,7 +95,8 @@ export default function Home() {
               <h3>候補 {i + 1}</h3>
               {r.legs.map((l, j) => (
                 <p key={j}>
-                  {l.start_address} → {l.end_address}（{l.distance.text}, {l.duration.text}）
+                  {l.start_address} → {l.end_address}
+                  （{l.distance.text}, {l.duration.text}）
                 </p>
               ))}
             </div>
@@ -108,10 +104,11 @@ export default function Home() {
         </div>
       )}
 
+      {/* 地図 */}
       <div
         id="map"
         style={{ width: "100%", height: "500px", marginTop: "20px" }}
-      ></div>
+      />
     </div>
   );
 }
