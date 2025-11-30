@@ -1,5 +1,5 @@
 // pages/index.js
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 
 export default function Home() {
   const [googleLoaded, setGoogleLoaded] = useState(false);
@@ -8,20 +8,23 @@ export default function Home() {
   const [waypoints, setWaypoints] = useState([]);
   const [inputValue, setInputValue] = useState("");
 
-  const [routes, setRoutes] = useState([]);          // API から返った全ルート
-  const [selectedRoute, setSelectedRoute] = useState(null); // 一時選択ルート
-  const [finalRoute, setFinalRoute] = useState(null);       // 確定ルート
+  const [segments, setSegments] = useState([]); // ← サーバー側に合わせて修正
+  const [selected, setSelected] = useState({ seg: null, route: null });
 
-  const allRenderersRef = useRef([]); // 全ルート描画用
-  const finalRendererRef = useRef(null); // 確定ルート表示用
+  const segmentRenderers = useRef([]); // 各区間の候補ルート表示用
+  const highlightRenderer = useRef(null); // 選択ルート表示用
 
-  // Google Maps 読み込み
+  // -------------------------------------------------------
+  // Google Maps Script 読み込み
+  // -------------------------------------------------------
   useEffect(() => {
     if (typeof window === "undefined") return;
+
     if (window.google && window.google.maps) {
       setGoogleLoaded(true);
       return;
     }
+
     const script = document.createElement("script");
     script.src =
       `https://maps.googleapis.com/maps/api/js?key=${process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY}&libraries=places`;
@@ -30,27 +33,33 @@ export default function Home() {
     document.head.appendChild(script);
   }, []);
 
-  // Map 初期化
+  // -------------------------------------------------------
+  // 地図初期化
+  // -------------------------------------------------------
   useEffect(() => {
     if (!googleLoaded) return;
 
-    const mapInstance = new window.google.maps.Map(document.getElementById("map"), {
+    const instance = new google.maps.Map(document.getElementById("map"), {
       center: { lat: 35.681236, lng: 139.767125 },
       zoom: 10,
     });
 
-    setMap(mapInstance);
+    setMap(instance);
   }, [googleLoaded]);
 
-  // --- Waypoint 追加 ---
+  // -------------------------------------------------------
+  // 地点追加
+  // -------------------------------------------------------
   const addWaypoint = () => {
     if (!inputValue.trim()) return;
     setWaypoints((prev) => [...prev, inputValue.trim()]);
     setInputValue("");
   };
 
-  // --- Directions API 呼び出し ---
-  const calculateRoute = useCallback(async () => {
+  // -------------------------------------------------------
+  // ルート計算（サーバーキー経由）
+  // -------------------------------------------------------
+  const calculateRoutes = async () => {
     if (waypoints.length < 2) {
       alert("2箇所以上を入力してください。");
       return;
@@ -65,93 +74,92 @@ export default function Home() {
 
       const data = await res.json();
 
-      if (!data.routes || data.routes.length === 0) {
+      if (!data.segments || data.segments.length === 0) {
         alert("Google Directions API がルートを返しませんでした。");
         return;
       }
 
-      setRoutes(data.routes);
-      setFinalRoute(null); // 確定解除
-      renderAllRoutes(data.routes);
-    } catch (error) {
-      console.error(error);
-      alert("ルート取得に失敗しました。");
+      setSegments(data.segments);
+
+      clearAllRenderers();
+      renderAllSegments(data.segments);
+
+    } catch (err) {
+      console.error(err);
+      alert("サーバーでルート取得に失敗しました");
     }
-  }, [waypoints, map]);
+  };
 
-  // --- 全ルートを薄く描画 ---
-  const renderAllRoutes = (routes) => {
-    // 古い描画を削除
-    allRenderersRef.current.forEach((r) => r.setMap(null));
-    allRenderersRef.current = [];
-
+  // -------------------------------------------------------
+  // 全区間の候補ルートを薄く描画
+  // -------------------------------------------------------
+  const renderAllSegments = (segmentsData) => {
     if (!map) return;
 
-    routes.forEach((route, index) => {
-      const renderer = new google.maps.DirectionsRenderer({
-        map,
-        directions: { routes: [route] },
-        routeIndex: 0,
-        polylineOptions: {
-          strokeOpacity: 0.4,
-          strokeWeight: 5,
-        },
+    clearAllRenderers();
+
+    segmentsData.forEach((seg, sIdx) => {
+      segmentRenderers.current[sIdx] = [];
+
+      seg.routes.forEach((route, rIdx) => {
+        const renderer = new google.maps.DirectionsRenderer({
+          map,
+          directions: { routes: [route] },
+          suppressMarkers: false,
+          polylineOptions: { strokeOpacity: 0.25, strokeWeight: 4 },
+        });
+
+        segmentRenderers.current[sIdx][rIdx] = renderer;
       });
-      allRenderersRef.current.push(renderer);
     });
   };
 
-  // --- 選択ルートを濃く描画 ---
-  const highlightRoute = (index) => {
-    setSelectedRoute(index);
-    if (!map || !routes[index]) return;
+  const clearAllRenderers = () => {
+    segmentRenderers.current.forEach((seg) =>
+      seg?.forEach((r) => r?.setMap(null))
+    );
+    segmentRenderers.current = [];
+  };
 
-    // 既存の強調ルートを削除
-    if (finalRendererRef.current) {
-      finalRendererRef.current.setMap(null);
+  const clearHighlight = () => {
+    if (highlightRenderer.current) {
+      highlightRenderer.current.setMap(null);
     }
+    highlightRenderer.current = null;
+  };
+
+  // -------------------------------------------------------
+  // 任意のルートを選択して強調表示
+  // -------------------------------------------------------
+  const highlightRoute = (sIdx, rIdx) => {
+    if (!segments[sIdx] || !segments[sIdx].routes[rIdx]) return;
+
+    setSelected({ seg: sIdx, route: rIdx });
+
+    clearHighlight();
 
     const renderer = new google.maps.DirectionsRenderer({
       map,
-      directions: { routes: [routes[index]] },
-      routeIndex: 0,
-      polylineOptions: {
-        strokeOpacity: 1.0,
-        strokeWeight: 7,
-      },
+      directions: { routes: [segments[sIdx].routes[rIdx]] },
+      suppressMarkers: false,
+      polylineOptions: { strokeOpacity: 1.0, strokeWeight: 6 },
     });
 
-    finalRendererRef.current = renderer;
-  };
-
-  // --- このルートに確定 ---
-  const confirmRoute = () => {
-    if (selectedRoute === null) {
-      alert("ルートを選択してください。");
-      return;
-    }
-
-    const route = routes[selectedRoute];
-    setFinalRoute(route);
-
-    // 全薄ルートを消す
-    allRenderersRef.current.forEach((r) => r.setMap(null));
-
-    // 確定ルートを太く描画
-    highlightRoute(selectedRoute);
-
-    alert("ルートを確定しました！");
+    highlightRenderer.current = renderer;
   };
 
   return (
     <div style={{ padding: 20 }}>
-      <h1>Trip Itinerary Maker</h1>
+      <h1>Trip Itinerary Maker（ServerKey 版）</h1>
 
+      {/* ------------------------------------ */}
+      {/* 入力 */}
+      {/* ------------------------------------ */}
       <div>
         <input
           value={inputValue}
           onChange={(e) => setInputValue(e.target.value)}
-          placeholder="地点名を入力"
+          placeholder="地点名を入力（例: 新宿駅）"
         />
         <button onClick={addWaypoint}>追加</button>
       </div>
@@ -165,40 +173,47 @@ export default function Home() {
         </ul>
       </div>
 
-      <button onClick={calculateRoute}>ルート計算</button>
+      <button onClick={calculateRoutes}>ルート計算</button>
 
+      {/* ------------------------------------ */}
+      {/* ルート候補一覧 */}
+      {/* ------------------------------------ */}
       <div style={{ marginTop: 20 }}>
-        <h3>検索結果（選択して確定できます）</h3>
-        {routes.map((r, i) => (
-          <div
-            key={i}
-            style={{
-              border: "1px solid #ccc",
-              padding: 10,
-              marginBottom: 10,
-              cursor: "pointer",
-              background: selectedRoute === i ? "#f0f0f0" : "white",
-            }}
-            onClick={() => highlightRoute(i)}
-          >
-            <b>経路 {i + 1}</b><br />
-            距離: {r.legs[0].distance.text} / 所要時間: {r.legs[0].duration.text}
+        <h2>検索結果（区間ごとの候補）</h2>
+
+        {segments.map((seg, sIdx) => (
+          <div key={sIdx} style={{ marginBottom: 20 }}>
+            <h3>
+              区間 {sIdx + 1}：{seg.from} → {seg.to}
+            </h3>
+
+            {seg.routes.map((route, rIdx) => (
+              <div
+                key={rIdx}
+                onClick={() => highlightRoute(sIdx, rIdx)}
+                style={{
+                  border: "1px solid #ccc",
+                  padding: 10,
+                  marginBottom: 10,
+                  cursor: "pointer",
+                  background:
+                    selected.seg === sIdx && selected.route === rIdx
+                      ? "#eef"
+                      : "white",
+                }}
+              >
+                <b>候補 {rIdx + 1}</b><br />
+                距離：{route.legs[0].distance.text} / 
+                時間：{route.legs[0].duration.text}
+              </div>
+            ))}
           </div>
         ))}
-
-        {selectedRoute !== null && (
-          <button onClick={confirmRoute} style={{ marginTop: 10 }}>
-            このルートに確定
-          </button>
-        )}
-
-        {finalRoute && (
-          <div style={{ marginTop: 20, color: "green", fontWeight: "bold" }}>
-            ✔ このルートが確定されました
-          </div>
-        )}
       </div>
 
+      {/* ------------------------------------ */}
+      {/* 地図 */}
+      {/* ------------------------------------ */}
       <div
         id="map"
         style={{ width: "100%", height: "500px", marginTop: 20 }}
