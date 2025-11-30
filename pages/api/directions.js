@@ -1,44 +1,55 @@
 // pages/api/directions.js
 export default async function handler(req, res) {
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "POST only" });
+  }
+
+  const { waypoints } = req.body;
+
+  if (!waypoints || waypoints.length < 2) {
+    return res.status(400).json({ error: "waypoints must be >= 2" });
+  }
+
+  const API_KEY = process.env.GOOGLE_MAPS_API_KEY;
+
+  // 全区間の結果（複数候補も全て保持）
+  const allSegments = [];
+
   try {
-    const { waypoints } = req.body;
+    // 区間ごとに Directions API を叩く
+    for (let i = 0; i < waypoints.length - 1; i++) {
+      const origin = encodeURIComponent(waypoints[i]);
+      const destination = encodeURIComponent(waypoints[i + 1]);
 
-    if (!waypoints || waypoints.length < 2) {
-      return res.status(400).json({ error: "Waypoints が不足しています" });
+      const url =
+        `https://maps.googleapis.com/maps/api/directions/json` +
+        `?origin=${origin}` +
+        `&destination=${destination}` +
+        `&alternatives=true` +
+        `&mode=driving` +
+        `&language=ja` +
+        `&key=${API_KEY}`;
+
+      const response = await fetch(url);
+      const data = await response.json();
+
+      if (!data.routes || data.routes.length === 0) {
+        return res.status(200).json({
+          error: `区間 ${waypoints[i]} → ${waypoints[i + 1]} のルートが見つかりません`,
+          routes: [],
+        });
+      }
+
+      allSegments.push({
+        from: waypoints[i],
+        to: waypoints[i + 1],
+        routes: data.routes,   // 各区間の複数候補
+      });
     }
 
-    const origin = waypoints[0];
-    const destination = waypoints[waypoints.length - 1];
-    const viaPoints = waypoints.slice(1, waypoints.length - 1);
-
-    const params = new URLSearchParams({
-      key: process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY,
-      origin,
-      destination,
-    });
-
-    if (viaPoints.length > 0) {
-      params.append("waypoints", viaPoints.join("|"));
-    }
-
-    params.append("alternatives", "true");
-
-    const url = `https://maps.googleapis.com/maps/api/directions/json?${params}`;
-
-    const response = await fetch(url);
-    const data = await response.json();
-
-    if (!data.routes || data.routes.length === 0) {
-      return res.status(200).json({ routes: [] });
-    }
-
-    // フロントでそのまま directions.routes を使えるように整形
-    return res.status(200).json({
-      routes: data.routes,
-    });
-
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Server Error" });
+    return res.status(200).json({ segments: allSegments });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ error: "API error", detail: e.message });
   }
 }
